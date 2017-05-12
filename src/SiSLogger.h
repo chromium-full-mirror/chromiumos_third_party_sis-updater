@@ -36,14 +36,28 @@ int LOGE(const char* format, ...);
 int getCurrentTimeString(char* buf);
 #endif
 
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGItoNull(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGItoLogcat(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGItoFile(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGItoLogcatAndFile(const char* format, va_list args);
 
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGEtoNull(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGEtoLogcat(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGEtoFile(const char* format, va_list args);
+
+__attribute__((__format__(__printf__, 1, 0)))
 int vLOGEtoLogcatAndFile(const char* format, va_list args);
 
 int LOGItoNull(const char* format, ...);
