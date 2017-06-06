@@ -17,7 +17,7 @@ class AegisSiSTouchAdapter : public SiSTouchAdapter {
                         changePWRMode) {}
 
  protected:
-  enum base {
+  enum _base {
     INITIAL_BASE = 0x0,
     BUILDER_CHIPINFO_ADDRESS = 0x200,
     BUILDER_SISMARK_ADDRESS = 0x20c,

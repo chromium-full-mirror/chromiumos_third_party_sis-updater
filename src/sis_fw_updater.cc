@@ -7,6 +7,11 @@
 #include <linux/input.h>
 #include <linux/types.h>
 
+#include <base/files/file_util.h>
+#include <base/logging.h>
+#include <base/strings/stringprintf.h>
+#include <brillo/syslog_logging.h>
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -16,12 +21,15 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <iomanip>
+#include <iostream>
 #include <typeinfo>
 #include <vector>
 
@@ -42,6 +50,8 @@
 #include "./UpdateFWParameter.h"
 #include "./csv_parser.hpp"
 #include "./version.h"
+
+using base::StringPrintf;
 
 int m_LogInterface = 0;
 
@@ -249,27 +259,46 @@ bool isLittleEndian() {
 }
 
 int main(int argc, char** argv) {
-  // If running on big endian, just exit.
-  if (!isLittleEndian()) {
-    printf("Do not support running on big endian system.");
-    return EXIT_ERR;
-  }
-
+  // Parse command line flags.
   ApplicationParameter* param_tmp =
       ApplicationParameter::create(ApplicationParameter::UPDATE_FW);
   UpdateFWParameter& param = dynamic_cast<UpdateFWParameter&>(*param_tmp);
-  int exitValue = EXIT_OK;
-
-  printVersion();
 
   if (!param.parse(argc, argv)) {
     param.print_usage();
     return EXIT_BADARGU;
   }
 
+  // Configure logging settings.
+  if (std::string(param.conParameter.log_to) == "") {
+    // Default log to syslog.
+    brillo::InitLog(brillo::InitFlags::kLogToSyslog);
+  } else if (std::string(param.conParameter.log_to) == "stdout") {
+    // Print log to stdout.
+    logging::LoggingSettings logging_settings;
+    logging::InitLogging(logging_settings);
+  } else {
+    // Log to a particular file.
+    logging::LoggingSettings logging_settings;
+    logging_settings.logging_dest = logging::LOG_TO_FILE;
+    logging_settings.log_file = param.conParameter.log_to;
+    logging_settings.lock_log = logging::DONT_LOCK_LOG_FILE;
+    logging::InitLogging(logging_settings);
+  }
+
+  // If running on big endian, just exit.
+  if (!isLittleEndian()) {
+    LOG(INFO) << "Do not support running on big endian system.";
+    return EXIT_ERR;
+  }
+
+  int exitValue = EXIT_OK;
+
+  printVersion();
+
   interrupt_phase = param.interrupt_point;
   if (interrupt_phase < 0 || interrupt_phase > 6) {
-    fprintf(stderr, "invalid interrupt point, must between 0 and 6\n");
+    LOG(WARNING) << "invalid interrupt point, must between 0 and 6.";
     interrupt_phase = 0;
   }
 
@@ -291,15 +320,15 @@ int main(int argc, char** argv) {
                                    : (param.conParameter.multi_Num);
 
     if (typeid(*adapter) == typeid(AegisMultiSiSTouchAdapter)) {
-      printf("multi\n");
+      LOG(INFO) << "multi..";
       if (param.filenames.size() == 1) {
         multiNum = 1;
       }
 
       if (!param.jump_check) {
         if (multiNum != param.conParameter.multi_Num) {
-          printf("input data count \"%d\" do not match chip count \"%d\"\n",
-                 param.conParameter.multi_Num, multiNum);
+          LOG(ERROR) << "Input data count " << param.conParameter.multi_Num
+                     << "do not match chip count " << multiNum;
           delete adapter;
           return EXIT_ERR;
         }
@@ -339,10 +368,11 @@ int main(int argc, char** argv) {
 
       if (ret != SiSTouchAdapter::SUCCESS) {
         exitValue = EXIT_ERR;
-        printf("some error occurs, please check the output. Err = %d.\n", ret);
+        LOG(ERROR) << "some error occurs, please check the output. Err = "
+                   << ret;
       } else {
         exitValue = EXIT_OK;
-        printf("update firmware complete\n");
+        LOG(INFO) << "update firmware complete";
       }
 
       for (int i = 0; i < multiNum; i++) {
@@ -351,10 +381,10 @@ int main(int argc, char** argv) {
         }
       }
     } else {
-      printf("single\n");
+      LOG(INFO) << "single..";
       if (param.conParameter.multi_Num != 1) {
-        printf("input data count \"%d\" incorrect\n",
-               param.conParameter.multi_Num);
+        LOG(ERROR) << "input data count incorrect, expecting 1, got "
+                   << param.conParameter.multi_Num;
         delete adapter;
         return EXIT_ERR;
       }
@@ -365,8 +395,8 @@ int main(int argc, char** argv) {
                   AegisMultiSiSTouchAdapter::SLAVE_DEVICE0_ADDR ||
               param.conParameter.slave_Addr >
                   AegisMultiSiSTouchAdapter::getStaticSlaveAddr(multiNum - 1)) {
-            printf("invalid slave addr \"0x%02x\" \n",
-                   param.conParameter.slave_Addr);
+            LOG(ERROR) << "invalid slave addr "
+                       << param.conParameter.slave_Addr;
 
             delete adapter;
             return EXIT_ERR;
@@ -392,10 +422,11 @@ int main(int argc, char** argv) {
 
       if (ret != SiSTouchAdapter::SUCCESS) {
         exitValue = EXIT_ERR;
-        printf("some error occurs, please check the output. Err = %d.\n", ret);
+        LOG(ERROR) << "some error occurs, please check the output. Err = "
+                   << ret;
       } else {
         exitValue = EXIT_OK;
-        printf("update firmware finished.\n");
+        LOG(INFO) << "update firmware complete";
       }
 
       fclose(input_file);
@@ -411,15 +442,15 @@ int main(int argc, char** argv) {
   return exitValue;
 }
 
-void print_sep() { printf("-----\n"); }
+void print_sep() { LOG(INFO) << "-----"; }
 
 FILE* open_firmware_bin(const char* filename, int* size) {
-  printf("opening firmware bin: %s\n", filename);
+  LOG(INFO) << "opening firmware bin: " << filename;
 
   FILE* input_file = fopen(filename, "r");
 
   if (!input_file) {
-    printf("ERROR: file not found\n");
+    LOG(ERROR) << "ERROR: file not found";
     return 0;
   }
 
@@ -427,7 +458,7 @@ FILE* open_firmware_bin(const char* filename, int* size) {
 
   int file_size = ftell(input_file);
   *size = file_size;
-  printf("pattern file contains %i bytes\n", file_size);
+  LOG(INFO) << "Pattern file contains " << file_size << " bytes";
 
   fseek(input_file, 0, SEEK_SET);
   return input_file;
@@ -479,8 +510,8 @@ static bool sortFwBinfileOrder(std::vector<std::string>* filenames) {
     if ((fp = fopen((*filenames)[idx].c_str(), "rb")) != NULL) {
 #define MULTICHIP_SELECTIVE_ID_ADDR (0xc027)
       if (0 != fseek(fp, MULTICHIP_SELECTIVE_ID_ADDR, SEEK_SET)) {
-        printf("file %s is not correct sis firmware file\n",
-               (*filenames)[idx].c_str());
+        LOG(ERROR) << "file " << (*filenames)[idx].c_str()
+                   << " is not correct sis firmware file";
         return false;
       }
 #undef MULTICHIP_SELECTIVE_ID_ADDR
@@ -488,13 +519,13 @@ static bool sortFwBinfileOrder(std::vector<std::string>* filenames) {
 
       switch (multichip_selective_id) {
         case ID_INVALID:
-          printf("%s: old firmware, cannot check multi-chip relation\n",
-                 (*filenames)[idx].c_str());
+          LOG(ERROR) << (*filenames)[idx].c_str()
+                     << ": old firmware, cannot check multi-chip relation\n";
           return false;
           break;
 
         case ID_NONE:
-          printf("%s: single chip firmware\n", (*filenames)[idx].c_str());
+          LOG(INFO) << (*filenames)[idx].c_str() << ": single chip firmware";
           chip_order.push_back(multichip_selective_id);
           break;
 
@@ -515,14 +546,14 @@ static bool sortFwBinfileOrder(std::vector<std::string>* filenames) {
           break;
 
         default:
-          printf("%s: FW format error, slave id of FW = %d\n",
-                 (*filenames)[idx].c_str(), multichip_selective_id);
+          LOG(ERROR) << (*filenames)[idx].c_str()
+                     << ": FW format error, slave id of FW = "
+                     << multichip_selective_id;
           return false;
           break;
       }
     } else {
-      fprintf(stderr, "can't open file ");
-      perror((*filenames)[idx].c_str());
+      LOG(ERROR) << "can't open file " << (*filenames)[idx].c_str();
       exit(-1);
     }
 
@@ -535,7 +566,7 @@ static bool sortFwBinfileOrder(std::vector<std::string>* filenames) {
 
   // false if more than one master fw bin file
   if (num_master_cnt > 1) {
-    printf("number of master FW = %d > 1\n", num_master_cnt);
+    LOG(ERROR) << "number of master FW > 1:" << num_master_cnt;
     return false;
   }
 
@@ -548,12 +579,12 @@ static bool sortFwBinfileOrder(std::vector<std::string>* filenames) {
   std::vector<std::string> tmp_filename(*filenames);
 
   if ((chip_order.size() != 0) && (slave_num == 0)) {
-    printf("number of FW file doesn't not match\n");
+    LOG(ERROR) << "number of FW file doesn't not match";
     return false;
   }
 
   if (slave_num != (bin_files_num - 1)) {
-    printf("number of FW file doesn't not match\n");
+    LOG(ERROR) << "number of FW file doesn't not match";
     return false;
   }
   // sort chip order to Master->Slave0->...->SlaveN
@@ -585,13 +616,14 @@ int UpdateFWParameter::parse(int argc, char** argv) {
     return 0;
   }
 
-  printf("parsing command parameter\n");
+  LOG(INFO) << "parsing command parameter";
 
   for (int i = 1; i < argc; i++) {
-    printf("%d: [%s] \n", i, argv[i]);
+    LOG(INFO) << i << ": "
+              << "[" << argv[i] << "]";
 
     if (!parseArgument(argv[i])) {
-      printf("unknown parameter: %s\n", argv[i]);
+      LOG(ERROR) << "unknown parameter: " << argv[i];
       return 0;
     }
   }
@@ -606,28 +638,28 @@ bool UpdateFWParameter::parseArgument(char* arg) {
 
   if (strcmp(arg, "-b") == 0) {
     update_bootloader = true;
-    printf("update bootloader\n");
+    LOG(INFO) << "update bootloader";
   } else if (strcmp(arg, "-ba") == 0) {
     update_bootloader_auto = true;
-    printf("update bootloader automatically\n");
+    LOG(INFO) << "update bootloader automatically";
   } else if (strcmp(arg, "-g") == 0) {
     reserve_RODATA = true;
-    printf("reserve RO data\n");
+    LOG(INFO) << "reserve RO data";
   } else if (strcmp(arg, "-r") == 0) {
     update_parameter = true;
-    printf("only update parameter\n");
+    LOG(INFO) << "only update parameter";
   } else if (strcmp(arg, "--force") == 0) {
     force_update = true;
-    printf("force update\n");
+    LOG(INFO) << "force update";
   } else if (strcmp(arg, "--jump") == 0) {
     jump_check = true;
-    printf("jump parameter validation\n");
+    LOG(INFO) << "jump parameter validation";
   } else if (strstr(arg, "-w=") == arg) {
     wait_time = atoi(arg + 3);
-    printf("wait time set: %d\n", wait_time);
+    LOG(INFO) << "wait time set: " << wait_time;
   } else if (strstr(arg, "-interrupt=") == arg) {
     interrupt_point = atoi(arg + 11);
-    printf("set test interrupt point %d\n", interrupt_point);
+    LOG(INFO) << "set test interrupt point " << interrupt_point;
   } else {
     filenames.push_back(arg);
   }
@@ -637,17 +669,17 @@ bool UpdateFWParameter::parseArgument(char* arg) {
 /*===========================================================================*/
 int UpdateFWParameter::check() {
   if (update_parameter && update_bootloader) {
-    printf("-r and -b is conflict\n");
+    LOG(WARNING) << "-r and -b conflict";
     return 0;
   }
 
   if (update_parameter && reserve_RODATA) {
-    printf("-r and -g is conflict\n");
+    LOG(WARNING) << "-r and -g conflict";
     return 0;
   }
 
   if (force_update && jump_check) {
-    printf("--force and --jump is conflict\n");
+    LOG(WARNING) << "--force and --jump conflict";
     return 0;
   }
 
@@ -658,7 +690,7 @@ int UpdateFWParameter::check() {
   int bin_files_num = this->filenames.size();
 
   if (bin_files_num == 0) {
-    printf("no fw bin file specified\n");
+    LOG(WARNING) << "no fw bin file specified";
     return 0;
   }
 
@@ -674,10 +706,10 @@ int UpdateFWParameter::check() {
 void UpdateFWParameter::print_usage() {
   printf("\n");
   printf(
-      "Usage: updateFW [-i=CONNECT] [-n=DEVICE_NAME] [-w=WAIT_TIME] "
-      "[--slave=SLAVEADDR] [-t=TIMEOUT] [-d=DELAY] [-io-delay=IO_DELAY] [-l] "
-      "[-b] [-ba] [-g] [-r] [--recovery] [--force] [--jump] [--no-diag] "
-      "[--no-power]\n");
+      "Usage: sis-updater [-i=CONNECT] [-n=DEVICE_NAME] [-w=WAIT_TIME] "
+      "[-slave=SLAVEADDR] [-t=TIMEOUT] [-d=DELAY] [-io-delay=IO_DELAY] "
+      "[-log_to=LOG_FILE_PATH] [-l] [-b] [-ba] [-g] [-r] [--recovery] "
+      "[--force] [--jump] [--no-diag] [--no-power] FIRMWARE_PATH\n");
   printf("Update firmware from specified file.\n");
   printf(
       "    CONNECT:     "
@@ -700,14 +732,15 @@ void UpdateFWParameter::print_usage() {
   printf(
       "    IO_DELAY:    integer, delay time after each query in millisecond, "
       "default 0\n");
+  printf("    LOG_FILE_PATH:    the file to write log to, can be 'stdout'.\n");
   printf("    -l:          verbose mode\n");
   printf("    -b:          update bootloader\n");
   printf("    -ba:         update bootloader automatically\n");
   printf("    -g:          reserve RO data\n");
   printf("    -r:          only update parameter\n");
-  printf("    --force:          force update\n");
-  printf("    --recovery:      device in recovery mode\n");
-  printf("    --jump:          jump parameter validation\n");
+  printf("    --force:     force update\n");
+  printf("    --recovery:  device in recovery mode\n");
+  printf("    --jump:      jump parameter validation\n");
   printf(
       "    --no-diag:   disable diagnosis mode changing automatically *** only "
       "for experiment, don't use in normal flow ***\n");
@@ -739,6 +772,7 @@ Parameter::Parameter()
       m_isRecoceryDevice(false) {
   snprintf(connect, MAX_CONNECT_CHAR, "auto");
   snprintf(devName, MAX_DEVNAME_LENGTH, "%s", "");
+  snprintf(log_to, PATH_MAX, "%s", "");
 }
 /*===========================================================================*/
 Parameter::~Parameter() {}
@@ -748,13 +782,14 @@ int Parameter::parse(int argc, char** argv) {
     return 0;
   }
 
-  printf("parsing command parameter\n");
+  LOG(INFO) << "parsing command parameter";
 
   for (int i = 1; i < argc; i++) {
-    printf("%d: [%s] ", i, argv[i]);
+    LOG(INFO) << i << ": "
+              << "[" << argv[i] << "]";
 
     if (!parseArgument(argv[i])) {
-      printf("unknown parameter\n");
+      LOG(ERROR) << "unknown parameter";
       return 0;
     }
   }
@@ -767,40 +802,41 @@ bool Parameter::parseArgument(char* arg) {
     setConnectType(arg + 3);
   } else if (strstr(arg, "-t=") == arg) {
     sscanf(arg + 3, "%d", &max_retry);
-    printf("retry set: %d\n", max_retry);
+    LOG(INFO) << "set max number of retries: " << max_retry;
   } else if (strstr(arg, "-d=") == arg) {
     sscanf(arg + 3, "%d", &delay);
-    printf("delay set: %dms.\n", delay);
+    LOG(INFO) << "set delay in ms: " << delay;
     delay *= 1000;
   } else if (strstr(arg, "-n=") == arg) {
     // strcpy(devName, arg + 3);
     snprintf(devName, MAX_DEVNAME_LENGTH, "%s", arg + 3);
-    printf("device name: %s\n", devName);
+    LOG(INFO) << "device name: " << devName;
   } else if (strcmp(arg, "-l") == 0) {
     verbose = 1;
-    printf("verbose mode\n");
+    LOG(INFO) << "verbose mode";
   } else if (strstr(arg, "-io_delay=") == arg) {
     sscanf(arg + 10, "%d", &io_Delay);
-    printf("io_delay set: %dms.\n", io_Delay);
-  } else if (strstr(arg, "--slave=") == arg) {
+    LOG(INFO) << "set io_delay in ms: " << io_Delay;
+  } else if (strstr(arg, "-slave=") == arg) {
     sscanf(arg + 8, "%d", &slave_Addr);
-    printf("slave addr : 0x%02x.\n", slave_Addr);
+    LOG(INFO) << "slave addr :" << slave_Addr;
+  } else if (strstr(arg, "-log_to=") == arg) {
+    snprintf(log_to, PATH_MAX, "%s", arg + 8);
+    LOG(INFO) << "log to :" << log_to;
   } else if (strcmp(arg, "--no-diag") == 0) {
     changeDiagMode = 0;
-    printf(
-        "disable diagnosis mode changing automatically *** only for "
-        "experiment, don't use in normal flow ***\n");
+    LOG(INFO) << "disable diagnosis mode changing automatically "
+              << "*** only for experiment, don't use in normal flow ***";
   } else if (strcmp(arg, "--no-power") == 0) {
     changePWRMode = 0;
-    printf(
-        "disable power mode changing automatically *** only for experiment, "
-        "don't use in normal flow  ***\n");
+    LOG(INFO) << "disable power mode changing automatically "
+              << "*** only for experiment, don't use in normal flow  ***";
   } else if (strcmp(arg, "--hidraw") == 0) {
     m_detectHidrawFlag = 1;
-    printf("Enable detect hidraw device\n");
+    LOG(INFO) << "Enable detect hidraw device";
   } else if (strcmp(arg, "--recovery") == 0) {
     m_isRecoceryDevice = true;
-    printf("Recovery mode device\n");
+    LOG(INFO) << "Recovery mode device";
   } else {
     return false;
   }
@@ -814,7 +850,7 @@ int Parameter::check() {
       strcmp(connect, AEGIS_I2C) != 0 && strcmp(connect, AEGIS_USB) != 0 &&
       strcmp(connect, AEGIS_INTERNALUSB) != 0 &&
       strcmp(connect, AEGIS_SLAVE) != 0 && strcmp(connect, AEGIS_MULTI) != 0) {
-    printf("error: connect type '%s' not supported\n", connect);
+    LOG(ERROR) << "error: connect type not supported: " << connect;
     return 0;
   }
 
@@ -824,7 +860,7 @@ int Parameter::check() {
 int Parameter::setActiveDeviceName() {
   if (strlen(devName) > 0) {
     if (SiSTouchIO::setActiveDeviceName(devName, strlen(devName)) != 1) {
-      printf("Can't find device : %s\n", devName);
+      LOG(WARNING) << "Can't find device: " << devName;
       return 0;
     }
   }
@@ -837,44 +873,44 @@ void Parameter::setConnectType(char* connectName) {
 
   if (strcmp(connectName, AUTO) == 0) {
     con = SiSTouchIO::CON_AUTO;
-    printf("target select: %s\n", AUTO);
+    LOG(INFO) << "target select: " << AUTO;
   } else if (strcmp(connectName, ZEUS_I2C) == 0) {
     con = SiSTouchIO::CON_ZEUS_I2C;
-    printf("target select: %s\n", ZEUS_I2C);
+    LOG(INFO) << "target select: " << ZEUS_I2C;
   } else if (strcmp(connectName, ZEUS_USB) == 0) {
     con = SiSTouchIO::CON_ZEUS_USB;
-    printf("target select: %s\n", ZEUS_USB);
+    LOG(INFO) << "target select: " << ZEUS_USB;
   } else if (strcmp(connectName, ZEUS_INTERNALUSB) == 0) {
     con = SiSTouchIO::CON_ZEUS_INTERUSB;
-    printf("target select: %s\n", ZEUS_INTERNALUSB);
+    LOG(INFO) << "target select: " << ZEUS_INTERNALUSB;
   } else if (strcmp(connectName, AEGIS_I2C) == 0) {
     con = SiSTouchIO::CON_AEGIS_I2C;
-    printf("target select: %s\n", AEGIS_I2C);
+    LOG(INFO) << "target select: " << AEGIS_I2C;
   } else if (strcmp(connectName, AEGIS_USB) == 0) {
     con = SiSTouchIO::CON_AEGIS_USB;
-    printf("target select: %s\n", AEGIS_USB);
+    LOG(INFO) << "target select: " << AEGIS_USB;
   } else if (strcmp(connectName, AEGIS_INTERNALUSB) == 0) {
     con = SiSTouchIO::CON_AEGIS_INTERUSB;
-    printf("target select: %s\n", AEGIS_INTERNALUSB);
+    LOG(INFO) << "target select: " << AEGIS_INTERNALUSB;
   } else if (strcmp(connectName, AEGIS_SLAVE) == 0) {
     con = SiSTouchIO::CON_AEGIS_SLAVE;
-    printf("target select: %s\n", AEGIS_SLAVE);
+    LOG(INFO) << "target select: " << AEGIS_SLAVE;
   } else if (strcmp(connectName, AEGIS_MULTI) == 0) {
     con = SiSTouchIO::CON_AEGIS_MULTI;
-    printf("target select: %s\n", AEGIS_MULTI);
+    LOG(INFO) << "target select: " << AEGIS_MULTI;
   } else if (strcmp(connectName, CUSTOM) == 0) {
     con = SiSTouchIO::CON_CUSTOM;
-    printf("target select: %s\n", CUSTOM);
+    LOG(INFO) << "target select: " << CUSTOM;
   } else {
     con = SiSTouchIO::CON_AUTO;
     snprintf(connect, MAX_CONNECT_CHAR, "%s", AUTO);
-    printf("target select: %s\n", AUTO);
+    LOG(INFO) << "target select: " << AUTO;
   }
 
   return;
 }
 /*===========================================================================*/
-void Parameter::print_sep() { printf("-----\n"); }
+void Parameter::print_sep() { LOG(INFO) << "-----"; }
 /*===========================================================================*/
 
 int SiSTouchAdapter::invert_endian(int data) {
@@ -909,7 +945,7 @@ bool SiSTouchAdapter::read_from_address(unsigned int addr, int* buffer,
     }
 
     if (ret < 0) {
-      printf("Read(0x86) Fail\n");
+      LOG(ERROR) << "Read(0x86) Fail";
       return false;
     }
 
@@ -963,13 +999,14 @@ bool SiSTouchAdapter::write_buffer_to_address(int* buf, int offset,
 
     for (int block_retry = 0; block_retry < 33; block_retry++) {
       ret = 0;
-      printf("block_retry: %d of max 33\n", block_retry + 1);
+      LOG(INFO) << "block_retry: " << block_retry + 1 << " of max 33";
 
-      printf("Write to addr = %08x pack_num=%d \n", addr, pack_num);
+      LOG(INFO) << StringPrintf("Write to addr = %08x pack_num = %d", addr,
+                                pack_num);
 
       ret = m_io->call_83(addr, pack_num);
       if (ret < 0) {
-        printf("Write Header(0x83) fail\n");
+        LOG(ERROR) << "Write Header(0x83) fail";
         continue;
       }
 
@@ -1002,25 +1039,25 @@ bool SiSTouchAdapter::write_buffer_to_address(int* buf, int offset,
       SET_TEST_POINT(interrupt_phase == current_phase);
 
       if (ret < 0) {
-        printf("Write(0x84) fail\n");
+        LOG(ERROR) << "Write(0x84) fail";
         continue;
       }
 
       ret = m_io->call_04();
-      printf("waiting for Query(0x04)\n");
+      LOG(INFO) << "waiting for Query(0x04)";
       usleep(1 * 1000 * 1000);
 
       if (ret < 0) {
-        printf("Query(0x04) fail\n");
+        LOG(ERROR) << "Query(0x04) fail";
         continue;
       } else {
-        printf("write all %d packets successfully\n", pack_num);
+        LOG(INFO) << "write all " << pack_num << " packets successfully";
         break;
       }
     }
 
     if (ret < 0) {
-      printf("retry time out\n");
+      LOG(ERROR) << "retry time out";
       break;
     }
 
@@ -1075,7 +1112,7 @@ int SiSTouchAdapter::getDeviceId(int* device_firmware_id, int id_Length) {
   int ret = SUCCESS;
 
   if (!device_firmware_id) {
-    printf("null device_firmware_id array\n");
+    LOG(ERROR) << "null device_firmware_id array";
     return ERROR_NULL_INPUT_ARRAY;
   }
 
@@ -1084,26 +1121,25 @@ int SiSTouchAdapter::getDeviceId(int* device_firmware_id, int id_Length) {
   }
 
   if (m_io->stop_driver() < 0) {
-    printf("stop driver fail\n");
+    LOG(ERROR) << "stop driver fail";
     return ERROR_STOP_DRIVER;
   }
 
   bool result =
       read_from_address(getFirmwareIdAddr(), device_firmware_id, id_Length);
   if (result) {
-    printf("device firmware id: ");
+    LOG(INFO) << "device firmware id: ";
     for (int i = 0; i < id_Length; i++) {
       device_firmware_id[i] = invert_endian(device_firmware_id[i]);
-      printf("%08x,", device_firmware_id[i]);
+      LOG(INFO) << StringPrintf("%08x", device_firmware_id[i]);
     }
-    printf("\n");
   } else {
     ret = ERROR_IN_READ_DATA;
-    printf("cannot read firmware id\n");
+    LOG(ERROR) << "cannot read firmware id";
   }
 
   if (m_io->start_driver() < 0) {
-    printf("start driver fail\n");
+    LOG(ERROR) << "start driver fail";
 
     if (ret == SUCCESS) {
       ret = ERROR_START_DRIVER;
@@ -1117,7 +1153,7 @@ int SiSTouchAdapter::getBootFlag(int* boot_flag, int flag_Length) {
   int ret = SUCCESS;
 
   if (!boot_flag) {
-    printf("null *boot_flag entry\n");
+    LOG(ERROR) << "null *boot_flag entry";
     return ERROR_NULL_INPUT_ARRAY;
   }
 
@@ -1126,25 +1162,25 @@ int SiSTouchAdapter::getBootFlag(int* boot_flag, int flag_Length) {
   }
 
   if (m_io->stop_driver() < 0) {
-    printf("stop driver fail\n");
+    LOG(ERROR) << "stop driver fail";
     return ERROR_STOP_DRIVER;
   }
 
   bool result = read_from_address(getBootFlagAddr(), boot_flag, flag_Length);
   if (result) {
-    printf("fw boot flag: ");
+    LOG(INFO) << "fw boot flag: ";
     for (int i = 0; i < flag_Length; i++) {
       boot_flag[i] = invert_endian(boot_flag[i]);
-      printf("%08x,", boot_flag[i]);
+      LOG(INFO) << StringPrintf("%08x", boot_flag[i]);
     }
     printf("\n");
   } else {
     ret = ERROR_IN_READ_DATA;
-    printf("cannot read boot flag\n");
+    LOG(ERROR) << "cannot read boot flag";
   }
 
   if (m_io->start_driver() < 0) {
-    printf("start driver fail\n");
+    LOG(ERROR) << "start driver fail";
 
     if (ret == SUCCESS) {
       ret = ERROR_START_DRIVER;
@@ -1157,12 +1193,12 @@ int SiSTouchAdapter::getBootFlag(int* boot_flag, int flag_Length) {
 bool SiSTouchAdapter::checkFileBufIsValid(int file_length, int* buf,
                                           int buf_length) {
   if (file_length > _64K) {
-    printf("file length exceed 64K\n");
+    LOG(ERROR) << "file length exceed 64K: " << file_length;
     return false;
   }
 
   if (!isSiSFWFile(buf, buf_length)) {
-    printf("file is not sis fw file\n");
+    LOG(ERROR) << "file is not sis fw file";
     return false;
   }
 
@@ -1174,7 +1210,7 @@ int SiSTouchAdapter::doUpdate(FILE* file, bool update_bootloader,
                               bool update_parameter, bool force_update,
                               bool jump_check, const bool isRecoveryDevice) {
   if (!file) {
-    printf("null file descriptor\n");
+    LOG(ERROR) << "null file descriptor";
     return ERROR_NULL_FILE;
   }
 
@@ -1201,12 +1237,12 @@ int SiSTouchAdapter::doUpdate(FILE* file, bool update_bootloader,
   prepareBuffer(buf, MAX_BUF_LENGTH);
 
   if (m_io->stop_driver() < 0) {
-    printf("stop driver fail\n");
+    LOG(ERROR) << "stop driver fail";
     return ERROR_STOP_DRIVER;
   }
 
   if (jump_check) {
-    printf("skip parameter validataion.\n");
+    LOG(INFO) << "skip parameter validation.";
     *isNewBootloader = true;
     ret = SUCCESS;
   } else {
@@ -1224,7 +1260,7 @@ int SiSTouchAdapter::doUpdate(FILE* file, bool update_bootloader,
   }
 
   if (m_io->start_driver() < 0) {
-    printf("start driver fail\n");
+    LOG(ERROR) << "start driver fail";
 
     if (ret == SUCCESS) {
       ret = ERROR_START_DRIVER;
@@ -1256,7 +1292,7 @@ SiSTouchAdapter* SiSTouchAdapter::prepareAdapter(Parameter param) {
                                     changePWRMode, detectHidrawFlag);
   }
 
-  printf("con=%d\n\n", con);
+  LOG(INFO) << "con=" << con;
 
   // only detect hidraw
   if (con == SiSTouchIO::CON_AEGIS_MULTI_FOR_NEW_DRIVER) {
@@ -1267,7 +1303,7 @@ SiSTouchAdapter* SiSTouchAdapter::prepareAdapter(Parameter param) {
     // no-op
   }
 
-  printf("not suitable sis touch device\n");
+  LOG(ERROR) << "not suitable sis touch device";
   return 0;
 }
 
@@ -1302,11 +1338,11 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
                                      bool update_parameter, bool restart) {
   if (isNewBootloader) {
     if (update_parameter) {
-      printf("write Parameters...\n");
+      LOG(INFO) << "write Parameters...";
       current_phase = 1;
       if (!write_buffer_to_address(buf, FIRMWARE_INFO_BASE, buf_length, _4K,
                                    FIRMWARE_INFO_BASE)) {
-        printf("write Parameters fail\n");
+        LOG(ERROR) << "write Parameters fail";
         return 0;
       }
     } else {
@@ -1314,10 +1350,10 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
         int RODataBuf[_8K / sizeof(int)] = {0};
         memset(RODataBuf, 0, _8K / sizeof(int) * sizeof(int));
 
-        printf("acquire RO data...\n");
+        LOG(INFO) << "acquire RO data...";
         if (!read_from_address(DEVICE_CALIBRATION_DATA_ADDRESS, RODataBuf,
                                _8K / sizeof(int))) {
-          printf("cannot acquire RO data\n");
+          LOG(ERROR) << "cannot acquire RO data";
           return 0;
         }
 
@@ -1326,10 +1362,10 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
 
         buf[BOOT_FLAG_BASE / sizeof(int)] = 0x0;
 
-        printf("clear boot flag...\n");
+        LOG(INFO) << "clear boot flag...";
         if (!write_buffer_to_address(buf, CALIBRATION_BASE, buf_length, _8K,
                                      CALIBRATION_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
 
@@ -1338,53 +1374,53 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
         int fakeBuf[_8K / sizeof(int)] = {0};
         memset(fakeBuf, 0, _8K / sizeof(int) * sizeof(int));
 
-        printf("release RO data...\n");
+        LOG(INFO) << "release RO data...";
         current_phase = 2;
         if (!write_buffer_to_address(fakeBuf, 0, _8K / sizeof(int), _8K,
                                      CALIBRATION_BASE)) {
-          printf("release RO fail\n");
+          LOG(ERROR) << "release RO fail";
           return 0;
         }
       }
 
       if (update_bootloader) {
-        printf("write FW...\n");
+        LOG(INFO) << "write FW...";
         current_phase = 3;
         if (!write_buffer_to_address(buf, MAINCODE_BASE, buf_length, _48K,
                                      MAINCODE_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
 
-        printf("write bootloader...\n");
+        LOG(INFO) << "write bootloader...";
         current_phase = 4;
         if (!write_buffer_to_address(buf, INITIAL_BASE, buf_length, _4K,
                                      INITIAL_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
 
-        printf("write update code...\n");
+        LOG(INFO) << "write update code...";
         current_phase = 5;
         if (!write_buffer_to_address(buf, UPDATE_BASE, buf_length,
                                      file_length - _56K - _4K, UPDATE_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
 
-        printf("write RO data...\n");
+        LOG(INFO) << "write RO data...";
         current_phase = 6;
         if (!write_buffer_to_address(buf, CALIBRATION_BASE, buf_length, _8K,
                                      CALIBRATION_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
 
       } else {
-        printf("write FW...\n");
+        LOG(INFO) << "write FW...";
         if (!write_buffer_to_address(buf, MAINCODE_BASE, buf_length, _56K,
                                      MAINCODE_BASE)) {
-          printf("write FW fail\n");
+          LOG(ERROR) << "write FW fail";
           return 0;
         }
       }
@@ -1394,10 +1430,10 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
       int RODataBuf[_8K / sizeof(int)] = {0};
       memset(RODataBuf, 0, _8K / sizeof(int) * sizeof(int));
 
-      printf("acquire RO data...\n");
+      LOG(INFO) << "acquire RO data...";
       if (!read_from_address(DEVICE_CALIBRATION_DATA_ADDRESS, RODataBuf,
                              _8K / sizeof(int))) {
-        printf("cannot acquire RO data\n");
+        LOG(ERROR) << "cannot acquire RO data";
         return 0;
       }
 
@@ -1406,21 +1442,21 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
     }
 
     if (update_parameter) {
-      printf("Update parameter is not effect in old bootloader\n");
+      LOG(WARNING) << "Update parameter is not effect in old bootloader";
     }
 
     // original flow
-    printf("write FW...\n");
+    LOG(INFO) << "write FW...";
     current_phase = 3;
     if (!write_buffer_to_address(buf, 0, buf_length, file_length, 0)) {
-      printf("write FW fail\n");
+      LOG(ERROR) << "write FW fail";
       return 0;
     }
   }
 
   if (restart) {
     if (m_io->call_82() < 0) {
-      printf("Reset(0x82) fail\n");
+      LOG(ERROR) << "Reset(0x82) fail";
       return 0;
     }
   }
@@ -1438,7 +1474,7 @@ void AegisSiSTouchAdapter::prepareBuffer(int* buf, int buf_length) {
   int device_firmware_id[FIRMWARE_ID_LENGTH] = {0};
   int getDeviceIdResult = getDeviceId(device_firmware_id, FIRMWARE_ID_LENGTH);
   if (getDeviceIdResult != SUCCESS && getDeviceIdResult != ERROR_START_DRIVER) {
-    printf("ERROR: Fail to Get Device ID\n");
+    LOG(ERROR) << "ERROR: Fail to Get Device ID";
     exit(-1);
   }
 
@@ -1476,8 +1512,9 @@ int AegisI2CSiSTouchAdapter::isSiSFWFile(int* buf, int buf_length) {
 
     if (interfaceId != I2C_INTERFACE ||
         multichip_Selective_ChipId != NON_MULTI_DEVICE_FLAG) {
-      printf("interface not match. interface : %02x, multi_select : %02x\n",
-             interfaceId, multichip_Selective_ChipId);
+      LOG(ERROR) << StringPrintf(
+          "interface not match. interface: %02x, multi_select: %02x",
+          interfaceId, multichip_Selective_ChipId);
       ret = 0;
     } else {
       ret = 1;
@@ -1499,8 +1536,9 @@ int AegisUSBSiSTouchAdapter::isSiSFWFile(int* buf, int buf_length) {
 
     if (interfaceId != I2C_INTERFACE ||
         multichip_Selective_ChipId != NON_MULTI_DEVICE_FLAG) {
-      printf("interface not match. interface : %02x, multi_select : %02x\n",
-             interfaceId, multichip_Selective_ChipId);
+      LOG(ERROR) << StringPrintf(
+          "interface not match. interface: %02x, multi_select: %02x",
+          interfaceId, multichip_Selective_ChipId);
       ret = 0;
     } else {
       ret = 1;
@@ -1524,8 +1562,9 @@ int AegisInterUSBSiSTouchAdapter::isSiSFWFile(int* buf, int buf_length) {
         multichip_Selective_ChipId == SLAVE_DEVICE0_FLAG ||
         multichip_Selective_ChipId == SLAVE_DEVICE1_FLAG ||
         multichip_Selective_ChipId == SLAVE_DEVICE2_FLAG) {
-      printf("interface not match. interface : %02x, multi_select : %02x\n",
-             interfaceId, multichip_Selective_ChipId);
+      LOG(ERROR) << StringPrintf(
+          "interface not match. interface: %02x, multi_select: %02x",
+          interfaceId, multichip_Selective_ChipId);
       ret = 0;
     } else {
       ret = 1;
@@ -1549,8 +1588,9 @@ int AegisSlaveSiSTouchAdapter::isSiSFWFile(int* buf, int buf_length) {
 
     if (interfaceId != I2C_INTERFACE ||
         (multichip_Selective_ChipId != slaveAddr)) {
-      printf("interface not match. interface : %02x, multi_select : %02x\n",
-             interfaceId, multichip_Selective_ChipId);
+      LOG(ERROR) << StringPrintf(
+          "interface not match. interface: %02x, multi_select: %02x",
+          interfaceId, multichip_Selective_ChipId);
       ret = 0;
     } else {
       ret = 1;
@@ -1578,8 +1618,9 @@ int AegisMultiSiSTouchAdapter::isSiSFWFile(int* buf, int buf_length) {
     // (multichip_Selective_ChipId != BRIDGE_DEVICE_FLAG) ))
     if (((slaveAddr > 0) &&
          (multichip_Selective_ChipId != slaveAddr))) {  // remove master == 0x00
-      printf("interface not match. interface : %02x, multi_select : %02x\n",
-             interfaceId, multichip_Selective_ChipId);
+      LOG(ERROR) << StringPrintf(
+          "interface not match. interface: %02x, multi_select: %02x",
+          interfaceId, multichip_Selective_ChipId);
       ret = 0;
     } else {
       ret = 1;
@@ -1619,7 +1660,7 @@ int AegisMultiSiSTouchAdapter::getStaticSlaveAddr(int idx) {
 }
 
 static inline void wait(const int sec) {
-  printf("wait for %d secs\n", sec);
+  LOG(INFO) << "wait for " << sec << " secs";
   for (int i = 0; i < sec; i++) {
     printf("...");
     fflush(stdout);
@@ -1638,7 +1679,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
   bool is817MasterFWBroken = Is817MasterFWBroken(this);
 
   if (!multi_files) {
-    printf("null file descriptor\n");
+    LOG(ERROR) << "null file descriptor";
     return ERROR_NULL_FILE;
   }
 #define NUM_OF_FILES (7)
@@ -1692,15 +1733,15 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
   }
 
   if (m_io->stop_driver() < 0) {
-    printf("stop driver fail\n");
+    LOG(ERROR) << "stop driver fail";
     return ERROR_STOP_DRIVER;
   }
 
   for (int i = 0; i < multi_Num; i++) {
     if (i == 0) {
-      printf("master:\n");
+      LOG(INFO) << "master:";
     } else {
-      printf("slave %d:\n", (i - 1));
+      LOG(INFO) << "slave :" << (i - 1);
     }
 
     multi_update_bootloader[i] = param.update_bootloader;
@@ -1718,7 +1759,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
     setSlaveAddr(getStaticSlaveAddr(i));
 
     if (param.jump_check) {
-      printf("skip parameter validataion.\n");
+      LOG(INFO) << "skip parameter validataion.";
       multi_isNewBootloader[i] = true;
       ret = SUCCESS;
     } else {
@@ -1733,7 +1774,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
   if (ret == SUCCESS) {
     if (is817MasterFWBroken) {
       // update master first and wait for param.wait_time
-      printf("master:\n");
+      LOG(INFO) << "master:";
 
       setSlaveAddr(getStaticSlaveAddr(0));
 
@@ -1749,7 +1790,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
         wait(param.wait_time);
 
         for (int i = 1; i < multi_Num; i++) {
-          printf("slave %d:\n", (i - 1));
+          LOG(INFO) << "slave :" << (i - 1);
 
           setSlaveAddr(getStaticSlaveAddr(i));
 
@@ -1768,7 +1809,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
     } else {
       // update slave first
       for (int i = 1; i < multi_Num; i++) {
-        printf("slave %d:\n", (i - 1));
+        LOG(INFO) << "slave :" << (i - 1);
 
         setSlaveAddr(getStaticSlaveAddr(i));
 
@@ -1785,7 +1826,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
       }
 
       if (ret == SUCCESS) {
-        printf("master:\n");
+        LOG(INFO) << "master:";
 
         setSlaveAddr(getStaticSlaveAddr(0));
 
@@ -1801,7 +1842,7 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
   }
 
   if (m_io->start_driver() < 0) {
-    printf("start driver fail\n");
+    LOG(WARNING) << "start driver fail";
 
     if (ret == SUCCESS) {
       ret = ERROR_START_DRIVER;
@@ -1827,60 +1868,76 @@ int AegisSiSTouchAdapter::parameterCheck(
   int new_fw_id[3] = {0};
 
   // read id info
-  printf("reading firmware info...\n");
+  LOG(INFO) << "reading firmware info...";
   bool result = read_from_address(getFirmwareInfoAddr(), firmwareInfo,
                                   FIRMWARE_INFO_LENGTH);
   if (result) {
-    printf("reading firmware info : success\n");
+    LOG(INFO) << "reading firmware info : success";
     index = (getFirmwareIdBase() - getFirmwareInfoBase()) / sizeof(int);
-    printf("current firmware id: %08x, %08x ,%08x\n",
-           invert_endian(firmwareInfo[index]),
-           invert_endian(firmwareInfo[index + 1]),
-           invert_endian(firmwareInfo[index + 2]));
     cur_fw_id[0] = invert_endian(firmwareInfo[index]);
     cur_fw_id[1] = invert_endian(firmwareInfo[index + 1]);
     cur_fw_id[2] = invert_endian(firmwareInfo[index + 2]);
+
+    LOG(INFO) << StringPrintf("current firmware id: %08x, %08x, %08x",
+                              cur_fw_id[0], cur_fw_id[1], cur_fw_id[2]);
+
     index = (getBootloaderIdBase() - getFirmwareInfoBase()) / sizeof(int);
-    printf("current bootloader id: %08x\n", invert_endian(firmwareInfo[index]));
+    LOG(INFO) << StringPrintf("current bootloader id: %08x",
+                              invert_endian(firmwareInfo[index]));
+
     index = (getMainCodeCrcBase() - getFirmwareInfoBase()) / sizeof(int);
-    printf("current maincode crc: %08x\n", invert_endian(firmwareInfo[index]));
+    LOG(INFO) << StringPrintf("current maincode crc: %08x",
+                              invert_endian(firmwareInfo[index]));
+
     index = (getBootloaderCrcBase() - getFirmwareInfoBase()) / sizeof(int);
-    printf("current bootloader crc: %08x\n",
-           invert_endian(firmwareInfo[index]));
+    LOG(INFO) << StringPrintf("current bootloader crc: %08x",
+                              invert_endian(firmwareInfo[index]));
   } else {
-    printf("reading firmware info : fail\n");
+    LOG(ERROR) << "reading firmware info : fail";
   }
 
   index = getFirmwareIdBase() / sizeof(int);
-  printf("new firmware id: %08x, %08x ,%08x\n", invert_endian(buf[index]),
-         invert_endian(buf[index + 1]), invert_endian(buf[index + 2]));
   new_fw_id[0] = invert_endian(buf[index]);
   new_fw_id[1] = invert_endian(buf[index + 1]);
   new_fw_id[2] = invert_endian(buf[index + 2]);
+
+  LOG(INFO) << StringPrintf("new firmware id: %08x, %08x, %08x", new_fw_id[0],
+                            new_fw_id[1], new_fw_id[2]);
+
   index = getBootloaderIdBase() / sizeof(int);
-  printf("new bootloader id: %08x\n", invert_endian(buf[index]));
+  LOG(INFO) << StringPrintf("new bootloader id: %08x",
+                            invert_endian(buf[index]));
+
   index = getMainCodeCrcBase() / sizeof(int);
-  printf("new maincode crc: %08x\n", invert_endian(buf[index]));
+  LOG(INFO) << StringPrintf("new maincode crc: %08x",
+                            invert_endian(buf[index]));
+
   index = getBootloaderCrcBase() / sizeof(int);
-  printf("new bootloader crc: %08x\n", invert_endian(buf[index]));
+  LOG(INFO) << StringPrintf("new bootloader crc: %08x",
+                            invert_endian(buf[index]));
 
   // read calibration flag
-  printf("reading calibration and boot info\n");
+  LOG(INFO) << "reading calibration and boot info";
   result = read_from_address(getBootFlagAddr(), bootInfo, BOOT_INFO_LENGTH);
   if (result) {
-    printf("reading calibration and boot info : success\n");
+    LOG(INFO) << "reading calibration and boot info : success";
     index = (getBootFlagBase() - getBootFlagBase()) / sizeof(int);
-    printf("current boot flag: %08x\n", invert_endian(bootInfo[index]));
+    LOG(INFO) << StringPrintf("current boot flag: %08x",
+                              invert_endian(bootInfo[index]));
+
     index = (getCalibrationFlagBase() - getBootFlagBase()) / sizeof(int);
-    printf("current calibration flag: %08x\n", invert_endian(bootInfo[index]));
+    LOG(INFO) << StringPrintf("current calibration flag: %08x",
+                              invert_endian(bootInfo[index]));
   } else {
-    printf("reading calibration and boot info : fail\n");
+    LOG(ERROR) << "reading calibration and boot info : fail";
   }
 
   index = getBootFlagBase() / sizeof(int);
-  printf("new boot flag: %08x\n", invert_endian(buf[index]));
+  LOG(INFO) << StringPrintf("new boot flag: %08x", invert_endian(buf[index]));
+
   index = getCalibrationFlagBase() / sizeof(int);
-  printf("new calibration flag: %08x\n", invert_endian(buf[index]));
+  LOG(INFO) << StringPrintf("new calibration flag: %08x",
+                            invert_endian(buf[index]));
 
   index = (getBootFlagBase() - getBootFlagBase()) / sizeof(int);
   unsigned int bootFlag = static_cast<unsigned>(invert_endian(bootInfo[index]));
@@ -1904,7 +1961,7 @@ int AegisSiSTouchAdapter::parameterCheck(
 
   if (cur_fw_id[0] == new_fw_id[0] && cur_fw_id[1] == new_fw_id[1] &&
       cur_fw_id[2] == new_fw_id[2] && !isRecoveryDevice) {
-    printf("The device has the same FW as system.\n");
+    LOG(INFO) << "The device has the same FW as system.";
     return ERROR_IN_COMPARE_FIRMWARE;
   }
 
@@ -1912,10 +1969,10 @@ int AegisSiSTouchAdapter::parameterCheck(
     if ((main == 0xffff && sub == 0xffff) || (main < 0x0001) ||
         (main == 0x0001 && sub <= 0x0001)) {
       *isNewBootloader = false;
-      printf("Old bootloader. Only can update whole fw.\n");
+      LOG(INFO) << "Old bootloader. Only can update whole fw.";
       *update_bootloader = true;
       if (*update_parameter) {
-        printf("Disable only update parameters\n");
+        LOG(INFO) << "Disable only update parameters";
         *update_parameter = false;
       }
     } else {
@@ -1923,48 +1980,42 @@ int AegisSiSTouchAdapter::parameterCheck(
       if (!*update_bootloader) {
         if (deviceBootloaderId != fileBootloaderId) {
           if (update_bootloader_auto) {
-            printf(
-                "Different bootloader id. Automatically update with -ba "
-                "parameter.\n");
+            LOG(INFO) << "Different bootloader id. "
+                      << "Automatically update with -ba parameter.";
             *update_bootloader = true;
           } else {
             if (force_update) {
-              printf(
-                  "Different bootloader id. Force updating with -b "
-                  "parameter.\n");
+              LOG(INFO) << "Different bootloader id. "
+                        << "Force updating with -b parameter.";
               *update_bootloader = true;
               if (*update_parameter) {
-                printf("Disable only update parameters\n");
+                LOG(INFO) << "Disable only update parameters";
                 *update_parameter = false;
               }
             } else {
-              printf(
-                  "Different bootloader id. Please update with -b "
-                  "parameter.\n");
+              LOG(INFO) << "Different bootloader id. "
+                        << "Please update with -b parameter.";
               return ERROR_IN_COMPARE_BOOTLOADER;
             }
           }
         } else {
           if (bootLoaderCrc != deviceBootLoaderCrc) {
             if (update_bootloader_auto) {
-              printf(
-                  "Different bootloader id. Automatically update with -ba "
-                  "parameter.\n");
+              LOG(INFO) << "Different bootloader id. "
+                        << "Automatically update with -ba parameter.";
               *update_bootloader = true;
             } else {
               if (force_update) {
-                printf(
-                    "Different bootloader crc. Force updating with -b "
-                    "parameter.\n");
+                LOG(INFO) << "Different bootloader crc. "
+                          << "Force updating with -b parameter.";
                 *update_bootloader = true;
                 if (*update_parameter) {
-                  printf("Disable only update parameters\n");
+                  LOG(INFO) << "Disable only update parameters.";
                   *update_parameter = false;
                 }
               } else {
-                printf(
-                    "Different bootloader crc. Please update with -b "
-                    "parameter.\n");
+                LOG(ERROR) << "Different bootloader crc. "
+                           << "Please update with -b parameter.";
                 return ERROR_IN_COMPARE_BOOTLOADER;
               }
             }
@@ -1974,9 +2025,9 @@ int AegisSiSTouchAdapter::parameterCheck(
     }
   } else {
     *isNewBootloader = true;
-    printf("Broken fw. take new flow\n");
+    LOG(INFO) << "Broken fw. take new flow";
     if (*update_parameter) {
-      printf("Disable only update parameters\n");
+      LOG(INFO) << "Disable only update parameters";
       *update_parameter = false;
     }
   }
@@ -1984,17 +2035,17 @@ int AegisSiSTouchAdapter::parameterCheck(
   if (*update_parameter) {
     if (mainCodeCrc != deviceMainCodeCrc) {
       if (force_update) {
-        printf("Different main code crc. Disable only update parameters\n");
+        LOG(INFO) << "Different main code crc. Disable only update parameters.";
         *update_parameter = false;
       } else {
-        printf("Different main code crc. Cannot only update parameters.\n");
+        LOG(ERROR) << "Different main code crc. Cannot only update parameters.";
         return ERROR_IN_COMPARE_MAINCODE;
       }
     } else {
       if (mainCodeCrc == 0xffffffff) {
-        printf(
-            "The is no information in crc = 0xffffffff. Compare main code.\n");
-        printf("reading main code\n");
+        LOG(INFO)
+            << "The is no information in crc = 0xffffffff. Compare main code.";
+        LOG(INFO) << "reading main code";
 
         for (unsigned int i = 0; i < MAIN_CODE_LENGTH;
              i += (0x0500 / sizeof(int))) {
@@ -2006,9 +2057,9 @@ int AegisSiSTouchAdapter::parameterCheck(
         }
 
         if (result) {
-          printf("reading main code : success\n");
+          LOG(INFO) << "reading main code : success";
         } else {
-          printf("reading main code : fail\n");
+          LOG(WARNING) << "reading main code : fail";
         }
 
         for (unsigned int i = 0; i < MAIN_CODE_LENGTH;
@@ -2016,11 +2067,13 @@ int AegisSiSTouchAdapter::parameterCheck(
           for (int j = 0; j < READ_LENGTH; j++) {
             if (mainCode[i + j] != buf[(MAINCODE_BASE / sizeof(int)) + i + j]) {
               if (force_update) {
-                printf("Different main code. Disable only update parameters\n");
+                LOG(INFO)
+                    << "Different main code. Disable only update parameters";
                 *update_parameter = false;
                 break;
               } else {
-                printf("Different main code. Cannot only update parameters.\n");
+                LOG(ERROR)
+                    << "Different main code. Cannot only update parameters.";
                 return ERROR_IN_COMPARE_MAINCODE;
               }
             }
@@ -2039,7 +2092,7 @@ int AegisSiSTouchAdapter::parameterCheck(
     unsigned int calibrationFlag =
         static_cast<unsigned int>(invert_endian(bootInfo[index]));
     if (calibrationFlag != getCalibrationFlagValue()) {
-      printf("Invalid RO data, drop RO data\n");
+      LOG(WARNING) << "Invalid RO data, drop RO data";
       *reserve_RODATA = false;
     }
   }
@@ -2061,10 +2114,8 @@ int AegisMultiSiSTouchAdapter::doDetectSlaveNum() {
   ret = m_io->stop_driver();
   if (ret < 0) {
     reinterpret_cast<SiSTouch_Aegis_Multi*>(m_io)->setSlaveAddr(oldSlaveAddr);
-    printf(
-        "[SiSTouch][AegisMultiSiSTouchAdapter::doDetectSlaveNum] stop_driver "
-        "fail, slaveNum=%d\n",
-        slaveNum);
+    LOG(INFO) << "[SiSTouch][AegisMultiSiSTouchAdapter::doDetectSlaveNum] "
+              << "stop_driver fail, slaveNum=" << slaveNum;
     return slaveNum;
   }
 
@@ -2208,7 +2259,7 @@ int SiSTouchIO::setIODelay(int delayms) {
   } else {
     m_IODelayms = 0;
   }
-  LOGI("IODelay set to %d ms", m_IODelayms);
+  LOG(INFO) << StringPrintf("IODelay set to %d ms", m_IODelayms);
   return m_IODelayms;
 }
 
@@ -2259,14 +2310,15 @@ int SiSTouchIO::getDeviceType(char* device_name, int max_retry, int retry_delay,
   if (detectHidrawFlag == 1) {
     // only detect hidraw
 
-    printf("Only detect hidraw\n");
+    LOG(INFO) << "Only detect hidraw";
 
     SisTouchFinder sisTouchFinder;
     if (sisTouchFinder.isSisTouchHid(device_name)) {
-      printf("valid input device name\n");
+      LOG(INFO) << "valid input device name";
       // snprintf(device_name, DEVNAME_MAX_LEN, "/dev/%s", device_name);
     } else {
-      printf("invalid input device name\n");
+      if (std::string(device_name) == "")
+        LOG(INFO) << "invalid input device name";
       device_name = sisTouchFinder.autoDetectDevicePath();
     }
 
@@ -2278,7 +2330,7 @@ int SiSTouchIO::getDeviceType(char* device_name, int max_retry, int retry_delay,
       snprintf(m_activeDeviceName, DEVNAME_MAX_LEN, "%s", device_name);
       // delete device_name;
 
-      printf("find activeDeviceName=%s, ", m_activeDeviceName);
+      LOG(INFO) << "find activeDeviceName=" << m_activeDeviceName;
       return con;
     }
   }
@@ -2288,7 +2340,7 @@ int SiSTouchIO::getDeviceType(char* device_name, int max_retry, int retry_delay,
 // 20130904 for multi device - end
 
 void SiSTouchIO::dbg_print_buffer_hex(const unsigned char* data, int size) {
-  LOGI("size = %d", size);
+  LOG(INFO) << "size = " << size;
 
   int strSize = get_MAX_SIZE() * 5;
 
@@ -2301,7 +2353,7 @@ void SiSTouchIO::dbg_print_buffer_hex(const unsigned char* data, int size) {
       snprintf(str, strSize, "%s %02x", str, data[i]);
     }
 
-    LOGI("%s", str);
+    LOG(INFO) << str;
 
   } else if (size > static_cast<int>(get_MAX_SIZE())) {
     snprintf(str, strSize, "%02x", data[0]);
@@ -2310,11 +2362,10 @@ void SiSTouchIO::dbg_print_buffer_hex(const unsigned char* data, int size) {
       snprintf(str, strSize, "%s %02x", str, data[i]);
     }
 
-    LOGI(
-        "========================Too long return "
-        "packets=======================");
-    LOGI("The first %d bytes:", get_MAX_SIZE());
-    LOGI("%s", str);
+    LOG(INFO) << "========================Too long return "
+              << "packets=======================";
+    LOG(INFO) << StringPrintf("The first %d bytes:", get_MAX_SIZE());
+    LOG(INFO) << str;
   }
 
   delete[] str;
@@ -2322,7 +2373,7 @@ void SiSTouchIO::dbg_print_buffer_hex(const unsigned char* data, int size) {
 
 void SiSTouchIO::dbg_print_buffer_hex(int cmd, const unsigned char* data,
                                       int size) {
-  LOGI("CMD %02x: ", cmd);
+  LOG(INFO) << StringPrintf("CMD %02x: ", cmd);
   dbg_print_buffer_hex(data, size);
 }
 
@@ -2331,8 +2382,8 @@ int SiSTouchIO::parse_syscall_return_value(int ret, int type) {
   temp = errno;
 
   if (m_verbose) {
-    LOGE("function type: %d", type);
-    LOGE("syscall error code: %d", temp);
+    LOG(ERROR) << "function type: " << type;
+    LOG(ERROR) << "syscall error code: " << temp;
   }
 
   if ((type & NOT_SIS_IO_FLAG) != 0) {
@@ -2648,7 +2699,7 @@ int SiSTouch_Aegis_Multi::stop_driver() {
   int ret;
 
   if (m_verbose) {
-    LOGI("stop_driver()");
+    LOG(INFO) << "stop_driver()";
   }
 
   for (int i = 0; i < DEVICE_CLOSE_RETRY_TIMES; i++) {
@@ -2749,7 +2800,7 @@ int SiSTouch_Aegis_Multi::start_driver() {
   int ret;
 
   if (m_verbose) {
-    LOGI("start_driver()");
+    LOG(INFO) << "start_driver()";
   }
 
 #ifdef PWR_MODE
@@ -2814,7 +2865,7 @@ int SiSTouch_Aegis_Multi::start_driver() {
 
 int SiSTouch_Aegis_Multi::call_04() {
   if (m_verbose) {
-    LOGI("call_04()");
+    LOG(INFO) << "call_04()";
   }
 
   int flag = 0;
@@ -2843,7 +2894,7 @@ int SiSTouch_Aegis_Multi::call_04() {
   if (!flag) {
     if (ret == ERROR_NACK) ret = ERROR_TIMEOUT;
 
-    if (m_verbose) LOGE("ERROR: 81 command not ACK, give up");
+    if (m_verbose) LOG(ERROR) << "ERROR: 81 command not ACK, give up";
   }
 
   if (ret < 0) {
@@ -2858,7 +2909,7 @@ int SiSTouch_Aegis_Multi::call_82() {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_82()");
+    LOG(INFO) << "call_82()";
   }
 
   for (int i = 0; i < m_retry; i++) {
@@ -2951,8 +3002,8 @@ int SiSTouch_Aegis_Multi::call_83(int base, int pack_num) {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_83()");
-    LOGI(" base=%08x,pack_num=%d", base, pack_num);
+    LOG(INFO) << "call_83()";
+    LOG(INFO) << StringPrintf("base=%08x, pack_num=%d", base, pack_num);
   }
 
   for (int i = 0; i < m_retry; i++) {
@@ -3040,8 +3091,9 @@ int SiSTouch_Aegis_Multi::call_84(const int* data, int size) {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_84()");
-    LOGI(" data=%08x,%08x,%08x,...,size=%d", data[0], data[1], data[2], size);
+    LOG(INFO) << "call_84()";
+    LOG(INFO) << StringPrintf("data=%08x, %08x, %08x,...,size=%d", data[0],
+                              data[1], data[2], size);
   }
 
   for (int i = 0; i < m_retry; i++) {
@@ -3091,8 +3143,8 @@ int SiSTouch_Aegis_Multi::call_85(int data) {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_85()");
-    LOGI(" data=%08x", data);
+    LOG(INFO) << "call_85()";
+    LOG(INFO) << StringPrintf(" data=%08x", data);
   }
 
   for (int i = 0; i < m_retry; i++) {
@@ -3180,8 +3232,8 @@ int SiSTouch_Aegis_Multi::call_86(int address, int* data, int size) {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_86()");
-    LOGI(" address=%08x", address);
+    LOG(INFO) << "call_86()";
+    LOG(INFO) << StringPrintf(" address=%08x", address);
   }
 
   for (int i = 0; i < m_retry; i++) {
@@ -3339,7 +3391,7 @@ int SiSTouch_Aegis_Multi::sis_usb_stop(void) {
 #ifdef VIA_IOCTL
   const char* devName = SiSTouchIO::getActiveDeviceName();
   if (devName == NULL) devName = DEVICE_NAME;
-  LOGI("%s: devName = %s\n", __FUNCTION__, devName);
+  LOG(INFO) << StringPrintf("%s: devName = %s\n", __FUNCTION__, devName);
 
   if (m_fd >= 0) {
     // close(m_fd);
@@ -3630,54 +3682,55 @@ void SiSTouch_Aegis_Multi::log_out_error_message(int ret, int cmd) {
 #endif
 
   if (cmd == -1) {
-    LOGE("CMD error: %d", ret);
+    LOG(ERROR) << StringPrintf("CMD error: %d", ret);
     switch (ret) {
       case SiSTouchIO::ERROR_SYSCALL:
-        LOGE("called error system call");
+        LOG(ERROR) << "called error system call";
         break;
 #ifdef VIA_IOCTL
       case SiSTouchIO::ERROR_ACCESS:
-        LOGE("cannot access device %s", devName);
+        LOG(ERROR) << StringPrintf("cannot access device %s", devName);
         break;
       case SiSTouchIO::ERROR_ENTRY_NOT_EXIST:
-        LOGE("entry %s not exist", devName);
+        LOG(ERROR) << StringPrintf("entry %s not exist", devName);
         break;
       case SiSTouchIO::ERROR_DEVICE_NOT_EXIST:
-        LOGE("device %s not exist", devName);
+        LOG(ERROR) << StringPrintf("device %s not exist", devName);
         break;
       default:
-        LOGE("Got errno %d", ret);
+        LOG(ERROR) << StringPrintf("Got errno %d", ret);
         break;
 #else
       default:
-        LOGE("ASSERT: Got impossible error code %d", ret);
+        LOG(ERROR) << StringPrintf("ASSERT: Got impossible error code %d", ret);
         break;
 #endif
     }
   } else {
-    LOGE("CMD %02x syscall error: %d", cmd, ret);
+    LOG(ERROR) << StringPrintf("CMD %02x syscall error: %d", cmd, ret);
 
     switch (ret) {
       case SiSTouchIO::ERROR:
-        LOGE("CMD %02x error", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x error", cmd);
         break;
       case SiSTouchIO::ERROR_NACK:
-        LOGE("CMD %02x not receive ack", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x not receive ack", cmd);
         break;
       case SiSTouchIO::ERROR_DEAD:
-        LOGE("CMD %02x dead", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x dead", cmd);
         break;
       case SiSTouchIO::ERROR_SYSCALL:
-        LOGE("CMD %02x invoke non exist system call", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x invoke non exist system call",
+                                   cmd);
         break;
       case SiSTouchIO::ERROR_TIMEOUT:
-        LOGE("CMD %02x transmit timeout", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x transmit timeout", cmd);
         break;
       case SiSTouchIO::ERROR_QUERY:
-        LOGE("cannot query driver");
+        LOG(ERROR) << "cannot query driver";
         break;
       case SiSTouchIO::ERROR_EACK:
-        LOGE("CMD %02x get error ack format", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x get error ack format", cmd);
         break;
       /*
          case SiSTouchIO::ERROR_USBNACK:
@@ -3685,40 +3738,43 @@ void SiSTouch_Aegis_Multi::log_out_error_message(int ret, int cmd) {
              break;
       */
       case SiSTouchIO::ERROR_USBEACK:
-        LOGE(" CMD %02x get error USB ack format", cmd);
+        LOG(ERROR) << StringPrintf(" CMD %02x get error USB ack format", cmd);
         break;
       case SiSTouchIO::ERROR_ACCESS_USER_MEMORY:
-        LOGE("Fail to access data from user memory");
+        LOG(ERROR) << "Fail to access data from user memory";
         break;
       case SiSTouchIO::ERROR_ALLOCATE_KERNEL_MEMORY:
-        LOGE("Fail to allocate kernel memory");
+        LOG(ERROR) << "Fail to allocate kernel memory";
         break;
       case SiSTouchIO::ERROR_COPY_FROM_USER:
-        LOGE("Fail to copy data from user memory to kernel memory");
+        LOG(ERROR) << "Fail to copy data from user memory to kernel memory";
         break;
       case SiSTouchIO::ERROR_COPY_FROM_KERNEL:
-        LOGE("Fail to copy data from kernel memory to user memory");
+        LOG(ERROR) << "Fail to copy data from kernel memory to user memory";
         break;
       case SiSTouchIO::ERROR_USB_DEV_NULL:
-        LOGE("SiS Touch device not exist");
+        LOG(ERROR) << "SiS Touch device not exist";
         break;
       case ERROR_BROKEN_PIPE:
-        LOGE("USB I/O broken pipe");
+        LOG(ERROR) << "USB I/O broken pipe";
         break;
       case SiSTouchIO::ERROR_WRONG_FORMAT:
-        LOGE("CMD %02x return not recognized format", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x return not recognized format",
+                                   cmd);
         break;
       case SiSTouchIO::ERROR_NOT_SUPPORT:
-        LOGE("CMD %02x not supported by this interface", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x not supported by this interface",
+                                   cmd);
         break;
       case SiSTouchIO::ERROR_CRC_MISMATCH:
-        LOGE("CMD %02x crc error", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x crc error", cmd);
         break;
       case SiSTouchIO::ERROR_TRANSMIT_TIMOUT:
-        LOGE("CMD %02x transmit timeout", cmd);
+        LOG(ERROR) << StringPrintf("CMD %02x transmit timeout", cmd);
         break;
       default:
-        LOGE("ASSERT: CMD %02x got impossible error code", cmd);
+        LOG(ERROR) << StringPrintf("ASSERT: CMD %02x got impossible error code",
+                                   cmd);
         break;
     }
   }
@@ -3760,7 +3816,7 @@ MultiOpenShortData::MultiOpenShortData()
 MultiOpenShortData::MultiOpenShortData(int chipNum)
     : mChipNum(chipNum), mDatas(0), mChipOrderIndexs(0), mReadBaseVoltage(1) {
   if (chipNum < 1) {
-    printf("minimum chipNum is 1.\n");
+    LOG(INFO) << "minimum chipNum is 1.";
     chipNum = 1;
   }
 
@@ -3954,7 +4010,7 @@ MultiOpenShortResult::MultiOpenShortResult(int chipNum)
       // mPointTpNG(0),
       lostSide(0) {
   if (chipNum < 1) {
-    printf("minimum chipNum is 1.\n");
+    LOG(INFO) << "minimum chipNum is 1.";
     chipNum = 1;
   }
   setChipNum(chipNum);
@@ -4213,7 +4269,7 @@ char* SisTouchFinder::autoDetectHidDevicePath() {
         }
 
         /* check if deviceName is hid_Sis_touch */
-        printf("[check HID: %s]\n", deviceName);
+        LOG(INFO) << "[check HID: " << deviceName << "]";
         if (isSisTouchHid(deviceName)) {
           pclose(pipe);
           return deviceName;  // search first
@@ -4228,7 +4284,7 @@ char* SisTouchFinder::autoDetectHidDevicePath() {
 }
 
 bool SisTouchFinder::isSisTouchHid(const char* deviceName) {
-  STF_DEBUG printf("[isSisTouchHid] deviceName=%s\n", deviceName);
+  STF_DEBUG LOG(INFO) << "[isSisTouchHid] deviceName=" << deviceName;
 
   bool ret = getHidInfo(deviceName);
 
@@ -4255,14 +4311,14 @@ bool SisTouchFinder::getHidInfo(const char* deviceName) {
   struct hidraw_report_descriptor rpt_desc;
   struct hidraw_devinfo info;
 
-  STF_DEBUG printf("getHidInfo: %s\n", deviceName);
+  STF_DEBUG LOG(INFO) << "getHidInfo: " << deviceName;
 
   /* Open the Device with non-blocking reads. In real life,
      don't use a hard coded path; use libudev instead. */
   fd = open(deviceName, O_RDWR | O_NONBLOCK);
 
   if (fd < 0) {
-    STF_DEBUG perror("Unable to open device");
+    STF_DEBUG LOG(WARNING) << "Unable to open device";
     return false;
   }
 
@@ -4275,12 +4331,12 @@ bool SisTouchFinder::getHidInfo(const char* deviceName) {
   if (res < 0) {
     STF_DEBUG perror("HIDIOCGRAWNAME");
   } else {
-    STF_DEBUG printf("Raw Name: %s\n", buf);
+    STF_DEBUG LOG(INFO) << "Raw Name: " << buf;
 
     // save raw name
     // strcpy(m_rawName, buf);
     snprintf(m_rawName, sizeof(m_rawName), "%s", buf);
-    printf("[rawName=%s]\n", m_rawName);
+    LOG(INFO) << "[rawName=" << m_rawName << "]";
   }
 
   /* Get Raw Info */
@@ -4288,20 +4344,22 @@ bool SisTouchFinder::getHidInfo(const char* deviceName) {
   if (res < 0) {
     STF_DEBUG perror("HIDIOCGRAWINFO");
   } else {
-    STF_DEBUG printf("Raw Info:\n");
-    STF_DEBUG printf("\tbustype: %d (%s)\n", info.bustype,
-                     bus_str(info.bustype));
+    STF_DEBUG LOG(INFO) << "Raw Info:";
+    STF_DEBUG LOG(INFO) << "bustype: " << info.bustype << " "
+                        << bus_str(info.bustype);
 
-    STF_DEBUG printf("\tvendor: 0x%04hx\n", (uint16_t)info.vendor);
+    STF_DEBUG LOG(INFO) << StringPrintf("vendor: 0x%04hx",
+                                        (uint16_t)info.vendor);
 
     // save vid
     m_vId = info.vendor;
     if (info.vendor == 0x0457) {
       isRecoveryDevice = true;
     }
-    printf("[vid=0x%04hx]\n", (uint16_t)m_vId);
+    LOG(INFO) << StringPrintf("[vid=0x%04hx]", (uint16_t)m_vId);
 
-    STF_DEBUG printf("\tproduct: 0x%04hx\n", (uint16_t)info.product);
+    STF_DEBUG LOG(INFO) << StringPrintf("product: 0x%04hx",
+                                        (uint16_t)info.product);
   }
 
   close(fd);
@@ -4363,7 +4421,7 @@ int setLogInterface(int logInterface) {
     m_vLOGEpointer = &vLOGEtoNull;
   }
 
-  LOGI("LogInterface set to %d", m_LogInterface);
+  LOG(INFO) << StringPrintf("LogInterface set to %d", m_LogInterface);
   return m_LogInterface;
 }
 
@@ -4576,7 +4634,8 @@ int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::simple_io_master(int cmd, int sleepms,
   if (cmd == 0x82 || cmd == 0x87) {
     int ret = sis_usb_start();
     if (ret != 0) {
-      printf("close m_fd (%s): fail , ret=%d\n", get_device_name(), ret);
+      LOG(WARNING) << StringPrintf("close m_fd (%s): fail ret=%d",
+                                   get_device_name(), ret);
     }
   }
   /* =============================================================== */
@@ -4604,7 +4663,7 @@ bool SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::reFindSisTouchName() {
     snprintf(m_activeDeviceName, DEVNAME_MAX_LEN, "%s", deviceName);
     delete deviceName;
 
-    printf("re-find activeDeviceName=%s\n\n", m_activeDeviceName);
+    LOG(INFO) << "re-find activeDeviceName=" << m_activeDeviceName;
   } else {
     return false;
   }
@@ -4616,7 +4675,7 @@ int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::call_82() {
   int ret = 0;
 
   if (m_verbose) {
-    LOGI("call_82()");
+    LOG(INFO) << "call_82()";
   }
 
   for (int i = 0; i < m_retry; i++) {
