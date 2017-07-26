@@ -102,6 +102,8 @@ int (*m_vLOGEpointer)(const char* format, va_list args) = 0;
 #define DUMMYBYTE 0
 #define HEADER_LENGTH 1
 
+#define FW_ID_LENGTH 3
+
 // 0x81 delay time (ms)
 #define DELAY_FOR_GENEARL 2
 #define DELAY_FOR_81 500
@@ -366,13 +368,29 @@ int main(int argc, char** argv) {
           (dynamic_cast<AegisMultiSiSTouchAdapter*>(adapter))
               ->doUpdate(multi_input_files, multiNum, param, isRecoveryDevice);
 
-      if (ret != SiSTouchAdapter::SUCCESS) {
-        exitValue = EXIT_ERR;
-        LOG(ERROR) << "some error occurs, please check the output. Err = "
-                   << ret;
-      } else {
-        exitValue = EXIT_OK;
-        LOG(INFO) << "update firmware complete";
+      switch (ret) {
+        case SiSTouchAdapter::SUCCESS: {
+          exitValue = EXIT_OK;
+          LOG(INFO) << "update firmware complete";
+          break;
+        }
+        case SiSTouchAdapter::RESULT_SAME_FIRMWARE: {
+          exitValue = EXIT_OK;
+          std::string version_string = "";
+          // TODO(frankhu): work with Mimo to have a better index of fw version.
+          for (int i = 0; i < param.filenames.size(); ++i) {
+            version_string.append(param.filenames[i] + ", ");
+          }
+          LOG(INFO)
+              << "device has same firmware with system, no need for updating: "
+              << version_string.substr(0, version_string.length() - 2);
+          break;
+        }
+        default: {
+          exitValue = EXIT_ERR;
+          LOG(ERROR) << "some error occurs, please check the output. Err = "
+                     << ret;
+        }
       }
 
       for (int i = 0; i < multiNum; i++) {
@@ -1085,6 +1103,8 @@ int32_t SiSTouchAdapter::getFileLength(FILE* file) {
 }
 
 bool SiSTouchAdapter::compareId(int* idA, int* idB, int length) {
+  if (idA == nullptr || idB == nullptr) return false;
+  if (length <= 0) return false;
   for (int i = 0; i < length; i++) {
     if (idA[i] != idB[i]) {
       return false;
@@ -1864,8 +1884,8 @@ int AegisSiSTouchAdapter::parameterCheck(
 
   int index = 0;
 
-  int cur_fw_id[3] = {0};
-  int new_fw_id[3] = {0};
+  int cur_fw_id[FW_ID_LENGTH] = {0};
+  int new_fw_id[FW_ID_LENGTH] = {0};
 
   // read id info
   LOG(INFO) << "reading firmware info...";
@@ -1959,10 +1979,9 @@ int AegisSiSTouchAdapter::parameterCheck(
   index = (getBootloaderCrcBase() - getFirmwareInfoBase()) / sizeof(int);
   int deviceBootLoaderCrc = invert_endian(firmwareInfo[index]);
 
-  if (cur_fw_id[0] == new_fw_id[0] && cur_fw_id[1] == new_fw_id[1] &&
-      cur_fw_id[2] == new_fw_id[2] && !isRecoveryDevice) {
+  if (compareId(cur_fw_id, new_fw_id, FW_ID_LENGTH) && !isRecoveryDevice) {
     LOG(INFO) << "The device has the same FW as system.";
-    return ERROR_IN_COMPARE_FIRMWARE;
+    return RESULT_SAME_FIRMWARE;
   }
 
   if (bootFlag == getBootFlagValue()) {

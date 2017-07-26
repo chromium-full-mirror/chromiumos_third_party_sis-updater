@@ -26,9 +26,10 @@
 class SiSTouchAdapter {
  public:
   enum {
-    SUCCESS = 1,
+    SUCCESS = 0,
     RESULT_SAME = 1,
-    RESULT_DIFFERENT = 0,
+    RESULT_DIFFERENT = 2,
+    RESULT_SAME_FIRMWARE = 3,
     ERROR_FAIL_GET_INPUT_ID = -256,
     ERROR_FAIL_GET_DEVICE_ID = -257,
     ERROR_FAIL_GET_FILE_ID = -258,
@@ -48,7 +49,6 @@ class SiSTouchAdapter {
     ERROR_FAIL_BOOT_FLAG = -272,
     ERROR_IN_COMPARE_BOOTLOADER = -273,
     ERROR_IN_COMPARE_MAINCODE = -274,
-    ERROR_IN_COMPARE_FIRMWARE = -275,
   };
 
   enum {
