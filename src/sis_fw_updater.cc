@@ -318,8 +318,10 @@ int main(int argc, char** argv) {
 
   if (adapter != 0) {
     int multiNum = SiSTouchAdapter::DEFALUT_SINGLE_NUM;
-    multiNum = (!param.jump_check) ? (adapter->doDetectSlaveNum() + 1)
-                                   : (param.conParameter.multi_Num);
+
+    multiNum = (!param.jump_check && !param.single_device) ?
+                                      (adapter->doDetectSlaveNum() + 1)
+                                    : (param.conParameter.multi_Num);
 
     if (typeid(*adapter) == typeid(AegisMultiSiSTouchAdapter)) {
       LOG(INFO) << "multi..";
@@ -622,6 +624,7 @@ UpdateFWParameter::UpdateFWParameter()
       update_parameter(false),
       force_update(false),
       jump_check(false),
+      single_device(false),
       wait_time(10),
       interrupt_point(0) {
   this->filenames.clear();
@@ -672,6 +675,9 @@ bool UpdateFWParameter::parseArgument(char* arg) {
   } else if (strcmp(arg, "--jump") == 0) {
     jump_check = true;
     LOG(INFO) << "jump parameter validation";
+  } else if (strcmp(arg, "--single") == 0) {
+    single_device = true;
+    LOG(INFO) << "assume single device";
   } else if (strstr(arg, "-w=") == arg) {
     wait_time = atoi(arg + 3);
     LOG(INFO) << "wait time set: " << wait_time;
@@ -701,6 +707,11 @@ int UpdateFWParameter::check() {
     return 0;
   }
 
+  if (single_device && (filenames.size() != 1)) {
+    LOG(WARNING) << "--single requires one single filename";
+    return 0;
+  }
+
   if (conParameter.check() == 0) {
     return 0;
   }
@@ -727,7 +738,7 @@ void UpdateFWParameter::print_usage() {
       "Usage: sis-updater [-i=CONNECT] [-n=DEVICE_NAME] [-w=WAIT_TIME] "
       "[-slave=SLAVEADDR] [-t=TIMEOUT] [-d=DELAY] [-io-delay=IO_DELAY] "
       "[-log_to=LOG_FILE_PATH] [-l] [-b] [-ba] [-g] [-r] [--recovery] "
-      "[--force] [--jump] [--no-diag] [--no-power] FIRMWARE_PATH\n");
+      "[--force] [--jump] [--no-diag] [--no-power] [--single] FIRMWARE_PATH\n");
   printf("Update firmware from specified file.\n");
   printf(
       "    CONNECT:     "
@@ -759,6 +770,7 @@ void UpdateFWParameter::print_usage() {
   printf("    --force:     force update\n");
   printf("    --recovery:  device in recovery mode\n");
   printf("    --jump:      jump parameter validation\n");
+  printf("    --single:    assume a single device without slaves\n");
   printf(
       "    --no-diag:   disable diagnosis mode changing automatically *** only "
       "for experiment, don't use in normal flow ***\n");
