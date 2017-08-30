@@ -29,6 +29,7 @@ class UpdateFWParameter : public ApplicationParameter {
   bool update_parameter;
   bool force_update;
   bool jump_check;
+  bool single_device;
   int wait_time;
   // This parameter is for test use only.
   int interrupt_point;
