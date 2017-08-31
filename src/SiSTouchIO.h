@@ -587,7 +587,7 @@ class SiSTouch_Aegis_USB : public SiSTouchIO {
   int simple_io(int cmd, int sleepms = 0);
   int io_command(unsigned char *buf, int size, int sleepms = 0);
   int sis_usb_write(void *data, unsigned int size, int timeout);
-  int sis_usb_read(void *data, unsigned int size, int timeout);
+  int sis_usb_read(void *data, unsigned int size, int timeout, int report_id);
 
   void make_common_header(int cmd, int length);
   void generate_output_crc();
@@ -725,7 +725,7 @@ class SiSTouch_Aegis_Multi : public SiSTouchIO {
  protected:
   virtual int sis_usb_start();
   virtual int sis_usb_write(void *data, unsigned int size, int timeout);
-  virtual int sis_usb_read(void *data, unsigned int size, int timeout);
+  virtual int sis_usb_read(void *data, unsigned int size, int timeout, int report_id);
   virtual int simple_io_master(int cmd, int sleepms = 0,
                                int wTimeout = DEFAULT_TIMEOUT,
                                int rTimeout = DEFAULT_TIMEOUT);
@@ -748,7 +748,7 @@ class SiSTouch_Aegis_Multi_FOR_NEW_DRIVER : public SiSTouch_Aegis_Multi {
 
  private:
   virtual int sis_usb_write(void *data, unsigned int size, int timeout);
-  virtual int sis_usb_read(void *data, unsigned int size, int timeout);
+  virtual int sis_usb_read(void *data, unsigned int size, int timeout, int report_id);
   virtual int simple_io_master(int cmd, int sleepms = 0,
                                int wTimeout = DEFAULT_TIMEOUT,
                                int rTimeout = DEFAULT_TIMEOUT);

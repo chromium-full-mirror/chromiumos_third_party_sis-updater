@@ -3475,7 +3475,7 @@ int SiSTouch_Aegis_Multi::simple_io_master(int cmd, int sleepms, int wTimeout,
     usleep(sleepms * 1000);
   }
 
-  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout);
+  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout, INPUT_REPORT_ID);
 
   if (m_verbose) dbg_print_buffer_hex(cmd, m_buffer, ret);
 
@@ -3505,7 +3505,7 @@ int SiSTouch_Aegis_Multi::simple_io_slave(int cmd, int sleepms, int wTimeout,
     usleep(sleepms * 1000);
   }
 
-  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout);
+  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout, INPUT_REPORT_ID);
 
   if (m_verbose) dbg_print_buffer_hex(cmd, m_buffer, ret);
 
@@ -3536,7 +3536,7 @@ int SiSTouch_Aegis_Multi::io_command(unsigned char* buf, int size, int sleepms,
     usleep(sleepms * 1000);
   }
 
-  ret = sis_usb_read(buf, BUFFER_SIZE, rTimeout);
+  ret = sis_usb_read(buf, BUFFER_SIZE, rTimeout, INPUT_REPORT_ID);
 
   if (m_verbose) dbg_print_buffer_hex(cmd, buf, ret);
 
@@ -3660,7 +3660,7 @@ int SiSTouch_Aegis_Multi::sis_usb_write(void* data, unsigned int size,
 }
 
 int SiSTouch_Aegis_Multi::sis_usb_read(void* data, unsigned int size,
-                                       int timeout) {
+                                       int timeout, int report_id) {
   int ret = 0;
   unsigned char* buf = (unsigned char*)data;
 #ifdef VIA_IOCTL
@@ -3679,7 +3679,12 @@ int SiSTouch_Aegis_Multi::sis_usb_read(void* data, unsigned int size,
   databuf[get_MAX_SIZE() + 6] = timeout >> 8 & 0xff;
   databuf[get_MAX_SIZE() + 7] = timeout & 0xff;
 
-  ret = read(m_fd, databuf, 72);
+  do {
+    ret = read(m_fd, databuf, 72);
+    if (ret > 0 && (buf[0] != report_id))
+      continue;
+    break;
+  } while(1);
 
   for (unsigned int i = 0; i < get_MAX_SIZE(); i++) {
     buf[i] = databuf[i];
@@ -4615,14 +4620,19 @@ int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::sis_usb_write(void* data,
 
 int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::sis_usb_read(void* data,
                                                       unsigned int size,
-                                                      int timeout) {
+                                                      int timeout,
+                                                      int report_id) {
   int ret = 0;
   unsigned char* buf = (unsigned char*)data;
 
 #ifdef VIA_IOCTL
 
-  ret = read(m_fd, buf, size);
-
+  do {
+    ret = read(m_fd, buf, size);
+    if (ret > 0 && (buf[0] != report_id))
+      continue;
+    break;
+  } while (1);
 #else
 
   ret = ERROR_NOT_SUPPORT;
@@ -4647,7 +4657,7 @@ int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::simple_io_master(int cmd, int sleepms,
     usleep(sleepms * 1000);
   }
 
-  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout);
+  ret = sis_usb_read(m_buffer, BUFFER_SIZE, rTimeout, INPUT_REPORT_ID);
 
   /* close m_fd for remove /dev/hidraw =======================================*/
   if (cmd == 0x82 || cmd == 0x87) {
