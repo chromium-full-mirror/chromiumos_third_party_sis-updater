@@ -232,7 +232,7 @@ class AegisSiSTouchAdapter : public SiSTouchAdapter {
                          bool restart = true);
   // virtual int updateCalibrationFlow(OpenShortData* data);
   // virtual int eraseCalibrationFlag(bool checkBootLoader = false);
-  virtual void prepareBuffer(int* buf, int buf_length);
+  virtual void prepareBuffer(int* buf, int buf_length, int *device_firmware_id);
   virtual int isSiSFWFile(int* buf, int buf_length);
 
   virtual int parameterCheck(bool* update_bootloader,

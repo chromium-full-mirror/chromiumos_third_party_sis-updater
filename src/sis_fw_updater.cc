@@ -1254,7 +1254,8 @@ int SiSTouchAdapter::doUpdate(FILE* file, bool update_bootloader,
     }
   }
 
-  prepareBuffer(buf, MAX_BUF_LENGTH);
+  int dev_fw_id[FIRMWARE_ID_LENGTH] = {0};
+  prepareBuffer(buf, MAX_BUF_LENGTH, dev_fw_id);
 
   if (m_io->stop_driver() < 0) {
     LOG(ERROR) << "stop driver fail";
@@ -1484,14 +1485,14 @@ int AegisSiSTouchAdapter::updateFlow(int* buf, int buf_length, int file_length,
   return 1;
 }
 
-void AegisSiSTouchAdapter::prepareBuffer(int* buf, int buf_length) {
+void AegisSiSTouchAdapter::prepareBuffer(int* buf, int buf_length,
+                                         int *device_firmware_id) {
   int index = 0;
   index = AEGIS_BASE / sizeof(int);
   if (index < buf_length) {
     buf[index] = invert_endian(0x50383132);
   }
 
-  int device_firmware_id[FIRMWARE_ID_LENGTH] = {0};
   int getDeviceIdResult = getDeviceId(device_firmware_id, FIRMWARE_ID_LENGTH);
   if (getDeviceIdResult != SUCCESS && getDeviceIdResult != ERROR_START_DRIVER) {
     LOG(ERROR) << "ERROR: Fail to Get Device ID";
@@ -1748,8 +1749,22 @@ int AegisMultiSiSTouchAdapter::doUpdate(FILE** multi_files, int multi_Num,
     }
   }
 
+  int dev_fw_id[FIRMWARE_ID_LENGTH] = {0};
   for (int i = 0; i < multi_Num; i++) {
-    prepareBuffer(multi_files_buf[i], MAX_BUF_LENGTH);
+    prepareBuffer(multi_files_buf[i], MAX_BUF_LENGTH, dev_fw_id);
+  }
+
+  if (multi_Num == 1 && !isRecoveryDevice) {
+    int new_fw_id[FIRMWARE_ID_LENGTH] = {0};
+    int index = getFirmwareIdBase() / sizeof(int);
+    new_fw_id[0] = invert_endian(multi_files_buf[0][index]);
+    new_fw_id[1] = invert_endian(multi_files_buf[0][index + 1]);
+    new_fw_id[2] = invert_endian(multi_files_buf[0][index + 2]);
+
+    if (compareId(new_fw_id, dev_fw_id, FW_ID_LENGTH)) {
+      LOG(INFO) << "The device has the same FW as system";
+      return RESULT_SAME_FIRMWARE;
+    }
   }
 
   if (m_io->stop_driver() < 0) {
