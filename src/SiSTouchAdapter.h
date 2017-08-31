@@ -210,7 +210,8 @@ class SiSTouchAdapter {
   virtual unsigned int getLayoutOffsetAddress() = 0;
   virtual unsigned int getFwModeAddr() { return 0; }
 
-  virtual void prepareBuffer(int* buf, int buf_length) = 0;
+  virtual void prepareBuffer(int* buf, int buf_length,
+                             int *device_firmware_id) = 0;
   virtual int updateFlow(int* buf, int buf_length, int file_length,
                          bool update_bootloader, bool isNewBootloader,
                          bool reserve_RODATA, bool update_parameter,
