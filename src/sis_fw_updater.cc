@@ -4655,6 +4655,21 @@ int SiSTouch_Aegis_Multi_FOR_NEW_DRIVER::sis_usb_read(void* data,
 #ifdef VIA_IOCTL
 
   do {
+    fd_set fd_read;
+    FD_ZERO(&fd_read);
+    FD_SET(m_fd, &fd_read);
+
+    struct timeval one_second_timeout;
+    one_second_timeout.tv_sec = 1;
+    one_second_timeout.tv_usec = 0;
+
+    if (select(m_fd + 1, &fd_read, NULL, NULL, &one_second_timeout) != 1) {
+      // The methods calling this do not propagate the return value properly and
+      // I see no way of recovering from this error.
+      close(m_fd);
+      LOG(ERROR) << "SiSTouch did not respond. Terminating firmware update.";
+      exit(1);
+    }
     ret = read(m_fd, buf, size);
     if (ret > 0 && (buf[0] != report_id))
       continue;
