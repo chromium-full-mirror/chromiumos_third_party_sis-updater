@@ -283,11 +283,7 @@ int main(int argc, char** argv) {
     // Log to a particular file.
     logging::LoggingSettings logging_settings;
     logging_settings.logging_dest = logging::LOG_TO_FILE;
-#if BASE_VER < 780000
-    logging_settings.log_file = param.conParameter.log_to;
-#else
     logging_settings.log_file_path = param.conParameter.log_to;
-#endif
     logging_settings.lock_log = logging::DONT_LOCK_LOG_FILE;
     logging::InitLogging(logging_settings);
   }
