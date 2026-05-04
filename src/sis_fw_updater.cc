@@ -3200,10 +3200,10 @@ int SiSTouch_Aegis_Multi::call_85(int data) {
 
     if (ret < 0) {
       ret = parse_syscall_return_value(ret, GENERAL_TYPE_FLAG);
-      break;
+      if (is_noneed_retry_error(ret)) break;
     } else {
       ret = read_simple_ack_master(ret);
-      break;
+      if (ret == 0) break;
     }
 
     usleep(m_delay);
@@ -4306,7 +4306,7 @@ SisTouchFinder::DeviceType SisTouchFinder::getDeviceType() {
 char* SisTouchFinder::autoDetectHidDevicePath() {
   FILE* pipe = popen("ls /dev/hidraw*", "r");
   if (pipe) {
-    int L_devName = 128;
+    const int L_devName = 128;
     char buffer[L_devName];
     char* deviceName = new char[L_devName];
 
